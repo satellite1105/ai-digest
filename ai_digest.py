@@ -71,21 +71,35 @@ def search_messages(keyword: str, oldest: int, latest: int) -> list[dict]:
     return messages
 
 
-def extract_articles(messages: list[dict]) -> dict[str, list[dict]]:
-    """重複URLを除去しチャンネルごとに記事を返す。"""
+MIN_TITLE_LEN = 15
+
+
+def extract_articles(messages: list[dict], oldest: int, latest: int) -> dict[str, list[dict]]:
     rich_link_pattern = re.compile(r"<(https?://[^|>]+)\|([^>]+)>")
 
     seen_urls: set[str] = set()
+    seen_titles: set[str] = set()
     by_channel: dict[str, list[dict]] = defaultdict(list)
 
     for msg in messages:
+        # strict date filter on ts
+        if not (oldest <= float(msg.get("ts", 0)) <= latest):
+            continue
+
         text = msg.get("text", "")
         channel_name = msg.get("channel", {}).get("name", "不明")
 
+        # adopt only the first qualifying link per message
         for url, title in rich_link_pattern.findall(text):
-            if url not in seen_urls:
-                seen_urls.add(url)
-                by_channel[channel_name].append({"url": url, "title": title.strip()})
+            title = title.strip()
+            if len(title) < MIN_TITLE_LEN:
+                continue
+            if url in seen_urls or title in seen_titles:
+                continue
+            seen_urls.add(url)
+            seen_titles.add(title)
+            by_channel[channel_name].append({"url": url, "title": title})
+            break  # first qualifying link only
 
     return by_channel
 
@@ -124,6 +138,8 @@ def post_to_slack(text: str) -> None:
         "channel": TARGET_CHANNEL_ID,
         "text": text,
         "mrkdwn": True,
+        "unfurl_links": False,
+        "unfurl_media": False,
     }
     resp = requests.post(url, headers=headers, json=payload)
     resp.raise_for_status()
@@ -145,7 +161,7 @@ def main() -> None:
         time.sleep(3)
 
     print(f"Total raw messages: {len(all_messages)}")
-    by_channel = extract_articles(all_messages)
+    by_channel = extract_articles(all_messages, oldest, latest)
     total = sum(len(v) for v in by_channel.values())
     print(f"Unique articles: {total}")
 
