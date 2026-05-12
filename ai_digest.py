@@ -39,11 +39,13 @@ def search_messages(keyword: str, oldest: int, latest: int) -> list[dict]:
     messages = []
     page = 1
 
+    # search.messages ignores oldest/latest params; use the `on:` search operator instead
+    date_str = datetime.fromtimestamp(oldest, tz=JST).strftime("%Y-%m-%d")
+    query = f"{keyword} on:{date_str}"
+
     while True:
         params = {
-            "query": keyword,
-            "oldest": oldest,
-            "latest": latest,
+            "query": query,
             "count": 100,
             "page": page,
         }
@@ -55,7 +57,10 @@ def search_messages(keyword: str, oldest: int, latest: int) -> list[dict]:
             break
 
         matches = data.get("messages", {}).get("matches", [])
-        messages.extend(matches)
+        # client-side filter as safety net in case on: uses a different timezone
+        for m in matches:
+            if oldest <= float(m.get("ts", 0)) <= latest:
+                messages.append(m)
 
         paging = data.get("messages", {}).get("paging", {})
         if page >= paging.get("pages", 1):
