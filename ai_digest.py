@@ -1,0 +1,141 @@
+import os
+import re
+import time
+from collections import defaultdict
+from datetime import datetime, timezone, timedelta
+
+import requests
+
+SLACK_TOKEN = os.environ["SLACK_TOKEN"]
+TARGET_CHANNEL_ID = "C0B3ABK2JKE"
+KEYWORDS = ["AI", "生成AI", "ChatGPT", "Claude", "Gemini", "LLM", "機械学習"]
+
+JST = timezone(timedelta(hours=9))
+
+
+def get_yesterday_range_jst() -> tuple[int, int]:
+    now_jst = datetime.now(JST)
+    yesterday = now_jst.date() - timedelta(days=1)
+    start = datetime(yesterday.year, yesterday.month, yesterday.day, 0, 0, 0, tzinfo=JST)
+    end = datetime(yesterday.year, yesterday.month, yesterday.day, 23, 59, 59, tzinfo=JST)
+    return int(start.timestamp()), int(end.timestamp())
+
+
+def search_messages(keyword: str, oldest: int, latest: int) -> list[dict]:
+    url = "https://slack.com/api/search.messages"
+    headers = {"Authorization": f"Bearer {SLACK_TOKEN}"}
+    messages = []
+    page = 1
+
+    while True:
+        params = {
+            "query": keyword,
+            "oldest": oldest,
+            "latest": latest,
+            "count": 100,
+            "page": page,
+        }
+        resp = requests.get(url, headers=headers, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+
+        if not data.get("ok"):
+            print(f"search.messages error for '{keyword}': {data.get('error')}")
+            break
+
+        matches = data.get("messages", {}).get("matches", [])
+        messages.extend(matches)
+
+        paging = data.get("messages", {}).get("paging", {})
+        if page >= paging.get("pages", 1):
+            break
+        page += 1
+        time.sleep(1)
+
+    return messages
+
+
+def extract_articles(messages: list[dict]) -> dict[str, list[dict]]:
+    """重複URLを除去しチャンネルごとに記事を返す。"""
+    rich_link_pattern = re.compile(r"<(https?://[^|>]+)\|([^>]+)>")
+
+    seen_urls: set[str] = set()
+    by_channel: dict[str, list[dict]] = defaultdict(list)
+
+    for msg in messages:
+        text = msg.get("text", "")
+        channel_name = msg.get("channel", {}).get("name", "不明")
+
+        for url, title in rich_link_pattern.findall(text):
+            if url not in seen_urls:
+                seen_urls.add(url)
+                by_channel[channel_name].append({"url": url, "title": title.strip()})
+
+    return by_channel
+
+
+def build_message(by_channel: dict[str, list[dict]], oldest: int) -> str:
+    yesterday_dt = datetime.fromtimestamp(oldest, tz=JST)
+    date_md = yesterday_dt.strftime("%-m/%-d")
+    date_full = yesterday_dt.strftime("%Y/%m/%d")
+
+    if not by_channel:
+        return (
+            f":newspaper: *昨日（{date_md}）のAI関連記事まとめ*\n\n"
+            "本日はAI関連記事が見つかりませんでした。\n\n"
+            f"_自動収集 · {date_full}_"
+        )
+
+    lines = [f":newspaper: *昨日（{date_md}）のAI関連記事まとめ*\n"]
+
+    for channel_name, articles in sorted(by_channel.items()):
+        lines.append(f"*#{channel_name} より*")
+        for i, a in enumerate(articles, 1):
+            lines.append(f"{i}. <{a['url']}|{a['title']}>")
+        lines.append("")
+
+    lines.append(f"_自動収集 · {date_full}_")
+    return "\n".join(lines)
+
+
+def post_to_slack(text: str) -> None:
+    url = "https://slack.com/api/chat.postMessage"
+    headers = {
+        "Authorization": f"Bearer {SLACK_TOKEN}",
+        "Content-Type": "application/json; charset=utf-8",
+    }
+    payload = {
+        "channel": TARGET_CHANNEL_ID,
+        "text": text,
+        "mrkdwn": True,
+    }
+    resp = requests.post(url, headers=headers, json=payload)
+    resp.raise_for_status()
+    data = resp.json()
+    if not data.get("ok"):
+        raise RuntimeError(f"chat.postMessage failed: {data.get('error')}")
+    print("Posted successfully.")
+
+
+def main() -> None:
+    oldest, latest = get_yesterday_range_jst()
+    print(f"Searching {datetime.fromtimestamp(oldest, tz=JST).strftime('%Y/%m/%d')} ({oldest}-{latest})")
+
+    all_messages: list[dict] = []
+    for keyword in KEYWORDS:
+        print(f"  keyword: {keyword}")
+        msgs = search_messages(keyword, oldest, latest)
+        all_messages.extend(msgs)
+        time.sleep(1)
+
+    print(f"Total raw messages: {len(all_messages)}")
+    by_channel = extract_articles(all_messages)
+    total = sum(len(v) for v in by_channel.values())
+    print(f"Unique articles: {total}")
+
+    message = build_message(by_channel, oldest)
+    post_to_slack(message)
+
+
+if __name__ == "__main__":
+    main()

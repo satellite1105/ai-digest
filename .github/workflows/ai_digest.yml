@@ -1,0 +1,27 @@
+name: AI Digest
+
+on:
+  schedule:
+    - cron: "0 1 * * *"   # 毎日 UTC 01:00 = JST 10:00
+  workflow_dispatch:       # 手動実行
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run AI Digest
+        env:
+          SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
+        run: python ai_digest.py
