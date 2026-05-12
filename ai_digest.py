@@ -82,24 +82,26 @@ def extract_articles(messages: list[dict], oldest: int, latest: int) -> dict[str
     by_channel: dict[str, list[dict]] = defaultdict(list)
 
     for msg in messages:
-        # strict date filter on ts
         if not (oldest <= float(msg.get("ts", 0)) <= latest):
             continue
 
         text = msg.get("text", "")
         channel_name = msg.get("channel", {}).get("name", "不明")
 
-        # adopt only the first qualifying link per message
-        for url, title in rich_link_pattern.findall(text):
-            title = title.strip()
-            if len(title) < MIN_TITLE_LEN:
-                continue
-            if url in seen_urls or title in seen_titles:
-                continue
-            seen_urls.add(url)
-            seen_titles.add(title)
-            by_channel[channel_name].append({"url": url, "title": title})
-            break  # first qualifying link only
+        # use search() to get only the first link in the message
+        m = rich_link_pattern.search(text)
+        if m is None:
+            continue
+        url, title = m.group(1), m.group(2).strip()
+
+        # if the first link has a short title it's an inline reference — skip the whole message
+        if len(title) < MIN_TITLE_LEN:
+            continue
+        if url in seen_urls or title in seen_titles:
+            continue
+        seen_urls.add(url)
+        seen_titles.add(title)
+        by_channel[channel_name].append({"url": url, "title": title})
 
     return by_channel
 
