@@ -21,6 +21,18 @@ def get_yesterday_range_jst() -> tuple[int, int]:
     return int(start.timestamp()), int(end.timestamp())
 
 
+def _get_with_retry(url: str, headers: dict, params: dict) -> requests.Response:
+    while True:
+        resp = requests.get(url, headers=headers, params=params)
+        if resp.status_code == 429:
+            wait = int(resp.headers.get("Retry-After", 60))
+            print(f"Rate limited (429). Waiting {wait}s before retry...")
+            time.sleep(wait)
+            continue
+        resp.raise_for_status()
+        return resp
+
+
 def search_messages(keyword: str, oldest: int, latest: int) -> list[dict]:
     url = "https://slack.com/api/search.messages"
     headers = {"Authorization": f"Bearer {SLACK_TOKEN}"}
@@ -35,8 +47,7 @@ def search_messages(keyword: str, oldest: int, latest: int) -> list[dict]:
             "count": 100,
             "page": page,
         }
-        resp = requests.get(url, headers=headers, params=params)
-        resp.raise_for_status()
+        resp = _get_with_retry(url, headers, params)
         data = resp.json()
 
         if not data.get("ok"):
@@ -126,7 +137,7 @@ def main() -> None:
         print(f"  keyword: {keyword}")
         msgs = search_messages(keyword, oldest, latest)
         all_messages.extend(msgs)
-        time.sleep(1)
+        time.sleep(3)
 
     print(f"Total raw messages: {len(all_messages)}")
     by_channel = extract_articles(all_messages)
