@@ -74,9 +74,28 @@ def search_messages(keyword: str, oldest: int, latest: int) -> list[dict]:
 MIN_TITLE_LEN = 15
 
 
-def extract_articles(messages: list[dict], oldest: int, latest: int) -> dict[str, list[dict]]:
+def _extract_link(msg: dict) -> tuple[str, str] | None:
+    """Return (url, title) for a message, preferring OGP attachments over raw text links."""
     rich_link_pattern = re.compile(r"<(https?://[^|>]+)\|([^>]+)>")
 
+    attachments = msg.get("attachments") or []
+    if attachments:
+        att = attachments[0]
+        url = att.get("original_url") or att.get("title_link") or ""
+        title = (att.get("title") or "").strip()
+        if url and len(title) >= MIN_TITLE_LEN:
+            return url, title
+
+    m = rich_link_pattern.search(msg.get("text", ""))
+    if m:
+        url, title = m.group(1), m.group(2).strip()
+        if len(title) >= MIN_TITLE_LEN:
+            return url, title
+
+    return None
+
+
+def extract_articles(messages: list[dict], oldest: int, latest: int) -> dict[str, list[dict]]:
     seen_urls: set[str] = set()
     seen_titles: set[str] = set()
     by_channel: dict[str, list[dict]] = defaultdict(list)
@@ -85,22 +104,16 @@ def extract_articles(messages: list[dict], oldest: int, latest: int) -> dict[str
         if not (oldest <= float(msg.get("ts", 0)) <= latest):
             continue
 
-        text = msg.get("text", "")
-        channel_name = msg.get("channel", {}).get("name", "不明")
-
-        # use search() to get only the first link in the message
-        m = rich_link_pattern.search(text)
-        if m is None:
+        result = _extract_link(msg)
+        if result is None:
             continue
-        url, title = m.group(1), m.group(2).strip()
+        url, title = result
 
-        # if the first link has a short title it's an inline reference — skip the whole message
-        if len(title) < MIN_TITLE_LEN:
-            continue
         if url in seen_urls or title in seen_titles:
             continue
         seen_urls.add(url)
         seen_titles.add(title)
+        channel_name = msg.get("channel", {}).get("name", "不明")
         by_channel[channel_name].append({"url": url, "title": title})
 
     return by_channel
