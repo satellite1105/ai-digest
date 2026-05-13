@@ -103,6 +103,8 @@ def extract_articles(messages: list[dict], oldest: int, latest: int) -> dict[str
     for msg in messages:
         if not (oldest <= float(msg.get("ts", 0)) <= latest):
             continue
+        if msg.get("channel", {}).get("id") == TARGET_CHANNEL_ID:
+            continue
 
         result = _extract_link(msg)
         if result is None:
