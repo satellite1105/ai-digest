@@ -69,7 +69,7 @@ KEYWORDS = ["AI", "生成AI", "ChatGPT", "Claude", "Gemini", "LLM", "機械学�
 
 ```yaml
 schedule:
-  - cron: "0 1 * * *"   # 毎日 UTC 01:00 = JST 10:00
+  - cron: "0 0 * * *"   # 毎日 UTC 00:00 = JST 09:00
 ```
 
 手動実行は GitHub Actions UI の「Run workflow」ボタンから行える（`workflow_dispatch` 対応）。
